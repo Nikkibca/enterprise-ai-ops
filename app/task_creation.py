@@ -1,3 +1,4 @@
+
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_audit_event
@@ -8,7 +9,7 @@ def create_task(
     db: Session,
     user_id: str,
     request: str,
-    actor: str = "system",
+    actor: str,
 ) -> Task:
     task = Task(
         user_id=user_id,
@@ -33,3 +34,4 @@ def create_task(
     db.refresh(task)
 
     return task
+

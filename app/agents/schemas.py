@@ -15,6 +15,39 @@ class ToolCall(BaseModel):
 
 class AgentPlan(BaseModel):
     reasoning_summary: str = Field(
-        description="Brief explanation of why the selected tool is appropriate."
+        description=(
+            "Brief explanation of why the selected tool "
+            "is appropriate."
+        )
     )
     tool_call: ToolCall
+
+
+class InvestigationResult(BaseModel):
+    summary: str = Field(
+        description="Concise summary of the investigation outcome."
+    )
+    findings: list[str] = Field(
+        default_factory=list,
+        description="Key findings supported by the investigation."
+    )
+    evidence: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Structured evidence produced by tools."
+    )
+    recommendation: str | None = Field(
+        default=None,
+        description="Recommended next step, if applicable."
+    )
+    proposed_action: str | None = Field(
+        default=None,
+        description="Operational action proposed by the workflow."
+    )
+    risk_level: str | None = Field(
+        default=None,
+        description="Risk level associated with the proposed action."
+    )
+    approval_required: bool = Field(
+        default=False,
+        description="Whether human approval is required."
+    )

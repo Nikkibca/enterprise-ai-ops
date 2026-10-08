@@ -1,27 +1,37 @@
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import text
 
 from app.db import SessionLocal
-from app.models import ApprovalRequest, AuditEvent, Task
 
 
 @pytest.fixture
 def db_session():
     db = SessionLocal()
 
+    def clean_database():
+        db.rollback()
+
+        db.execute(
+            text(
+                """
+                TRUNCATE TABLE
+                    approval_requests,
+                    audit_events,
+                    tasks
+                RESTART IDENTITY
+                """
+            )
+        )
+
+        db.commit()
+
     try:
         # Clean test data before the test.
-        db.execute(delete(ApprovalRequest))
-        db.execute(delete(AuditEvent))
-        db.execute(delete(Task))
-        db.commit()
+        clean_database()
 
         yield db
 
     finally:
         # Clean test data after the test.
-        db.execute(delete(ApprovalRequest))
-        db.execute(delete(AuditEvent))
-        db.execute(delete(Task))
-        db.commit()
+        clean_database()
         db.close()

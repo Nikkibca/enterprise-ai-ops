@@ -1,3 +1,4 @@
+
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -6,7 +7,6 @@ from app.models import ApprovalStatus, TaskStatus
 
 
 class CreateTaskRequest(BaseModel):
-    user_id: str
     request: str
 
 
@@ -25,7 +25,6 @@ class CreateApprovalRequest(BaseModel):
     task_id: int
     tool_name: str
     risk_level: str
-    requested_by: str
     reason: str
 
 
@@ -43,4 +42,5 @@ class ApprovalResponse(BaseModel):
 
 
 class ApprovalDecisionRequest(BaseModel):
-    decided_by: str
+    pass
+

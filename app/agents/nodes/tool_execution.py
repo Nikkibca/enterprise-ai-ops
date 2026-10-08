@@ -8,12 +8,46 @@ from app.agents.tool_validation import (
 )
 from app.approval_service import create_approval
 from app.audit.service import record_audit_event
+from app.models import Task
 from app.policy.engine import (
     PolicyDecision,
     evaluate_tool,
 )
 from app.tools.factory import create_tool_registry
 from app.tools.registry import ToolExecutionError
+from app.workflow_status import (
+    can_sync_task_status,
+    sync_task_status,
+)
+
+
+def _sync_status(
+    db: Session | None,
+    state: AgentState,
+    status: AgentStatus,
+) -> None:
+    if db is None or state.get("task_id") is None:
+        return
+
+    task = db.get(
+        Task,
+        state["task_id"],
+    )
+
+    if task is None:
+        return
+
+    if not can_sync_task_status(
+        task=task,
+        agent_status=status,
+    ):
+        return
+
+    sync_task_status(
+        db=db,
+        task=task,
+        agent_status=status,
+    )
 
 
 def tool_execution_node(
@@ -61,6 +95,12 @@ def tool_execution_node(
 
         # Critical-risk operations are denied.
         if policy_result.decision == PolicyDecision.DENY:
+            _sync_status(
+                db=db,
+                state=state,
+                status=AgentStatus.FAILED,
+            )
+
             return {
                 "status": AgentStatus.FAILED,
                 "risk_level": policy_result.risk_level.value,
@@ -100,6 +140,12 @@ def tool_execution_node(
                 reason=policy_result.reason,
             )
 
+            _sync_status(
+                db=db,
+                state=state,
+                status=AgentStatus.AWAITING_APPROVAL,
+            )
+
             return {
                 "status": AgentStatus.AWAITING_APPROVAL,
                 "risk_level": policy_result.risk_level.value,
@@ -110,7 +156,6 @@ def tool_execution_node(
             }
 
         # Low/medium-risk tools can execute immediately.
-
         if db is not None and state.get("task_id") is not None:
             record_audit_event(
                 db=db,
@@ -143,20 +188,45 @@ def tool_execution_node(
                 },
             )
 
+        _sync_status(
+            db=db,
+            state=state,
+            status=AgentStatus.EXECUTING_TOOL,
+        )
+
     except (
         ToolValidationError,
         ToolExecutionError,
         ValueError,
     ) as exc:
+        _sync_status(
+            db=db,
+            state=state,
+            status=AgentStatus.FAILED,
+        )
+
         return {
             "status": AgentStatus.FAILED,
             "error": str(exc),
         }
 
-    return {
-        "status": AgentStatus.EXECUTING_TOOL,
+    # Preserve the existing single-result field for backward compatibility.
+    #
+    # At the same time, accumulate every successful tool result so future
+    # multi-step investigations can retain the complete evidence trail.
+    tool_results = list(
+        state.get("tool_results", [])
+    )
+    tool_results.append(result)
+
+    current_step = state.get( "investigation_step", 0, ) 
+    
+    return { 
+        "status": AgentStatus.EXECUTING_TOOL, 
         "risk_level": policy_result.risk_level.value,
-        "approval_required": False,
+        "approval_required": False, 
         "approval_granted": False,
         "tool_result": result,
+        "tool_results": tool_results, 
+        "investigation_step": current_step + 1, 
     }

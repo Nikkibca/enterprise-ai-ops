@@ -1,5 +1,8 @@
 from app.agents.schemas import ToolCall
-from app.tools.registry import ToolRegistry
+from app.tools.registry import (
+    ToolExecutionError,
+    ToolRegistry,
+)
 
 
 class ToolValidationError(Exception):
@@ -15,4 +18,17 @@ def validate_tool_call(
             f"Tool not allowed: {tool_call.tool}"
         )
 
-    return tool_call
+    try:
+        validated_arguments = registry.validate_arguments(
+            tool_call.tool,
+            tool_call.arguments,
+        )
+    except ToolExecutionError as exc:
+        raise ToolValidationError(
+            str(exc)
+        ) from exc
+
+    return ToolCall(
+        tool=tool_call.tool,
+        arguments=validated_arguments,
+    )

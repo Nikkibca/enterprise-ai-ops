@@ -2,6 +2,12 @@ from app.tools.knowledge import knowledge_search
 from app.tools.operations import service_restart
 from app.tools.python_analysis import python_analysis
 from app.tools.registry import ToolRegistry
+from app.tools.schemas import (
+    KnowledgeSearchArguments,
+    PythonAnalysisArguments,
+    ServiceRestartArguments,
+    SqlReadArguments,
+)
 from app.tools.sql import sql_read
 
 
@@ -11,6 +17,7 @@ def create_tool_registry() -> ToolRegistry:
     registry.register(
         "knowledge.search",
         knowledge_search,
+        argument_model=KnowledgeSearchArguments,
         description=(
             "Search enterprise knowledge and troubleshooting "
             "documentation."
@@ -22,6 +29,7 @@ def create_tool_registry() -> ToolRegistry:
     registry.register(
         "sql.read",
         sql_read,
+        argument_model=SqlReadArguments,
         description=(
             "Execute validated read-only SQL queries against "
             "enterprise operational data."
@@ -33,6 +41,7 @@ def create_tool_registry() -> ToolRegistry:
     registry.register(
         "python.analysis",
         python_analysis,
+        argument_model=PythonAnalysisArguments,
         description=(
             "Run controlled numerical analytics on structured data."
         ),
@@ -43,6 +52,7 @@ def create_tool_registry() -> ToolRegistry:
     registry.register(
         "service.restart",
         service_restart,
+        argument_model=ServiceRestartArguments,
         description=(
             "Restart an operational service. This is a high-risk "
             "action and requires approval."

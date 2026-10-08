@@ -123,6 +123,16 @@ class ApprovalRequest(Base):
         nullable=True,
     )
 
+    execution_claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    execution_claimed_by: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"

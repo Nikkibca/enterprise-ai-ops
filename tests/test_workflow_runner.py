@@ -1,3 +1,5 @@
+import pytest
+
 from app.agents.schemas import AgentPlan
 from app.agents.state import AgentStatus
 from app.approval_service import approve_request
@@ -124,3 +126,341 @@ def test_workflow_runner_resumes_approval(db_session):
     assert second_result["tool_result"]["tool"] == "service.restart"
     assert second_result["tool_result"]["status"] == "simulated"
     assert second_result["tool_result"]["service"] == "payment-worker"
+
+
+def test_workflow_runner_persists_low_risk_task_lifecycle(
+    db_session,
+):
+    plan = AgentPlan(
+        reasoning_summary="Investigate payment failures.",
+        tool_call={
+            "tool": "sql.read",
+            "arguments": {
+                "query": "SELECT COUNT(*) FROM payment_failures",
+            },
+        },
+    )
+
+    task = Task(
+        user_id="user-123",
+        request="Investigate payment failures",
+    )
+
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    runner = WorkflowRunner(
+        FakeLLMProvider(plan),
+        db=db_session,
+    )
+
+    initial_state = {
+        "task_id": task.id,
+        "user_id": task.user_id,
+        "request": task.request,
+        "status": AgentStatus.IDLE,
+    }
+
+    result = runner.start(
+        initial_state,
+        thread_id=f"task-{task.id}",
+    )
+
+    assert result["status"] == AgentStatus.COMPLETED
+
+    assert result["tool_result"]["tool"] == "sql.read"
+
+    db_session.refresh(task)
+
+    assert task.status == "completed"
+
+def test_workflow_runner_cannot_resume_completed_approval_again(
+    db_session,
+    monkeypatch,
+):
+    plan = AgentPlan(
+        reasoning_summary="Restart the payment worker.",
+        tool_call={
+            "tool": "service.restart",
+            "arguments": {
+                "service": "payment-worker",
+            },
+        },
+    )
+
+    task = Task(
+        user_id="manager-123",
+        request="Restart the payment worker",
+    )
+
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    runner = WorkflowRunner(
+        FakeLLMProvider(plan),
+        db=db_session,
+    )
+
+    state = {
+        "task_id": task.id,
+        "user_id": task.user_id,
+        "request": task.request,
+        "status": AgentStatus.IDLE,
+    }
+
+    thread_id = f"duplicate-test-task-{task.id}"
+
+    first_result = runner.start(
+        state,
+        thread_id=thread_id,
+    )
+
+    approval_id = first_result["approval_id"]
+
+    approve_request(
+        db=db_session,
+        approval_id=approval_id,
+        decided_by="test-manager",
+    )
+
+    execution_count = 0
+
+    original_execute = (
+        "app.agents.nodes.approved_execution.create_tool_registry"
+    )
+
+    class CountingRegistry:
+        def execute(self, tool_name, arguments):
+            nonlocal execution_count
+            execution_count += 1
+
+            return {
+                "tool": tool_name,
+                "status": "simulated",
+                "service": arguments["service"],
+            }
+
+    monkeypatch.setattr(
+        original_execute,
+        lambda: CountingRegistry(),
+    )
+
+    result = runner.resume(
+        thread_id=thread_id,
+        approved=True,
+        decided_by="test-manager",
+    )
+
+    assert result["status"] == AgentStatus.COMPLETED
+    assert execution_count == 1
+
+    second_result = runner.resume(
+        thread_id=thread_id,
+        approved=True,
+        decided_by="test-manager",
+    )
+
+    assert second_result["status"] == AgentStatus.COMPLETED
+    assert execution_count == 1
+
+def test_workflow_runner_persists_failed_task_when_start_raises(
+    db_session,
+    monkeypatch,
+):
+    task = Task(
+        user_id="user-123",
+        request="Investigate payment failures",
+    )
+
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    runner = WorkflowRunner(
+        FakeLLMProvider(
+            AgentPlan(
+                reasoning_summary="Investigate payment failures.",
+                tool_call={
+                    "tool": "sql.read",
+                    "arguments": {
+                        "query": "SELECT COUNT(*) FROM payment_failures",
+                    },
+                },
+            )
+        ),
+        db=db_session,
+    )
+
+    def failing_invoke(*args, **kwargs):
+        raise RuntimeError("Unexpected workflow failure.")
+
+    monkeypatch.setattr(
+        runner.graph,
+        "invoke",
+        failing_invoke,
+    )
+
+    state = {
+        "task_id": task.id,
+        "user_id": task.user_id,
+        "request": task.request,
+        "status": AgentStatus.IDLE,
+    }
+
+    with pytest.raises(RuntimeError, match="Unexpected workflow failure."):
+        runner.start(
+            state,
+            thread_id=f"failure-task-{task.id}",
+        )
+
+    db_session.refresh(task)
+
+    assert task.status == "failed"    
+
+def test_workflow_runner_persists_failed_task_when_resume_raises(
+    db_session,
+    monkeypatch,
+):
+    task = Task(
+        user_id="manager-123",
+        request="Restart the payment worker",
+    )
+
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    runner = WorkflowRunner(
+        FakeLLMProvider(
+            AgentPlan(
+                reasoning_summary="Restart the payment worker.",
+                tool_call={
+                    "tool": "service.restart",
+                    "arguments": {
+                        "service": "payment-worker",
+                    },
+                },
+            )
+        ),
+        db=db_session,
+    )
+
+    # Put the task into the state a paused approval workflow would have.
+    task.status = "awaiting_approval"
+    db_session.commit()
+    db_session.refresh(task)
+
+    monkeypatch.setattr(
+        runner,
+        "get_state",
+        lambda thread_id: {
+            "task_id": task.id,
+            "user_id": task.user_id,
+            "request": task.request,
+            "status": AgentStatus.AWAITING_APPROVAL,
+        },
+    )
+
+    def failing_invoke(*args, **kwargs):
+        raise RuntimeError("Unexpected resume failure.")
+
+    monkeypatch.setattr(
+        runner.graph,
+        "invoke",
+        failing_invoke,
+    )
+
+    with pytest.raises(RuntimeError, match="Unexpected resume failure."):
+        runner.resume(
+            thread_id=f"resume-failure-task-{task.id}",
+            approved=True,
+            decided_by="test-manager",
+        )
+
+    db_session.refresh(task)
+
+    assert task.status == "failed"    
+
+def test_workflow_runner_does_not_downgrade_completed_task_on_failure(
+    db_session,
+):
+    task = Task(
+        user_id="user-123",
+        request="Investigate payment failures",
+        status="completed",
+    )
+
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    runner = WorkflowRunner(
+        FakeLLMProvider(
+            AgentPlan(
+                reasoning_summary="Investigate payment failures.",
+                tool_call={
+                    "tool": "sql.read",
+                    "arguments": {
+                        "query": "SELECT COUNT(*) FROM payment_failures",
+                    },
+                },
+            )
+        ),
+        db=db_session,
+    )
+
+    failed_state = {
+        "task_id": task.id,
+        "user_id": task.user_id,
+        "request": task.request,
+        "status": AgentStatus.FAILED,
+    }
+
+    runner._persist_workflow_status(failed_state)
+
+    db_session.refresh(task)
+
+    assert task.status == "completed"    
+
+def test_workflow_runner_keeps_failed_task_terminal(
+    db_session,
+):
+    task = Task(
+        user_id="user-123",
+        request="Investigate payment failures",
+        status="failed",
+    )
+
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    runner = WorkflowRunner(
+        FakeLLMProvider(
+            AgentPlan(
+                reasoning_summary="Investigate payment failures.",
+                tool_call={
+                    "tool": "sql.read",
+                    "arguments": {
+                        "query": "SELECT COUNT(*) FROM payment_failures",
+                    },
+                },
+            )
+        ),
+        db=db_session,
+    )
+
+    failed_state = {
+        "task_id": task.id,
+        "user_id": task.user_id,
+        "request": task.request,
+        "status": AgentStatus.FAILED,
+    }
+
+    runner._persist_workflow_status(failed_state)
+
+    db_session.refresh(task)
+
+    assert task.status == "failed"    

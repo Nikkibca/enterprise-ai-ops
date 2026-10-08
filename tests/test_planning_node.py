@@ -19,7 +19,7 @@ def test_planning_node_uses_llm_provider():
 
     state = {
         "task_id": 1,
-        "user_id": "test-user",
+        "user_id": "user-123",
         "request": "Investigate payment failures",
         "status": AgentStatus.IDLE,
     }

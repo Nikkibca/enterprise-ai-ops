@@ -1,22 +1,73 @@
 import json
 
+import pytest
+
 from app.agents.nodes.tool_execution import tool_execution_node
 from app.agents.state import AgentStatus
-from app.models import ApprovalRequest, ApprovalStatus, AuditEvent, Task
+from app.models import (
+    ApprovalRequest,
+    ApprovalStatus,
+    AuditEvent,
+    Task,
+)
+from app.rag.project1_client import Project1KnowledgeClient
 
 
-def create_task(db_session, user_id="user-123", request="Test task"):
+@pytest.fixture(autouse=True)
+def mock_project1_search(monkeypatch):
+    def fake_search(
+        self,
+        query: str,
+        top_k: int = 5,
+    ) -> dict:
+        return {
+            "query": query,
+            "results": [
+                {
+                    "document_id": 1,
+                    "filename": "payments.md",
+                    "chunk_id": 10,
+                    "chunk_index": 0,
+                    "content": (
+                        "Payment timeout troubleshooting."
+                    ),
+                    "distance": 0.12,
+                    "metadata": {
+                        "source": "payments.md",
+                        "chunk_index": 0,
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        Project1KnowledgeClient,
+        "search",
+        fake_search,
+    )
+
+
+def create_task(
+    db_session,
+    user_id="user-123",
+    request="Test task",
+):
     task = Task(
         user_id=user_id,
         request=request,
     )
+
     db_session.add(task)
     db_session.commit()
     db_session.refresh(task)
+
     return task
 
 
-def get_audit_events(db_session, task_id):
+def get_audit_events(
+    db_session,
+    task_id,
+):
     return (
         db_session.query(AuditEvent)
         .filter(AuditEvent.task_id == task_id)
@@ -76,6 +127,61 @@ def test_medium_risk_python_tool_executes():
     assert result["risk_level"] == "medium"
     assert result["approval_required"] is False
     assert result["tool_result"]["operation"] == "summary"
+
+
+def test_tool_result_is_accumulated_in_tool_results():
+    state = {
+        "selected_tool": "python.analysis",
+        "tool_arguments": {
+            "operation": "summary",
+            "values": [10, 20, 30],
+        },
+        "user_id": "user-123",
+        "tool_results": [],
+    }
+
+    result = tool_execution_node(state)
+
+    assert result["status"] == AgentStatus.EXECUTING_TOOL
+    assert result["tool_result"]["tool"] == "python.analysis"
+
+    assert result["tool_results"] == [
+        result["tool_result"],
+    ]
+
+
+def test_tool_results_preserve_previous_results():
+    previous_result = {
+        "tool": "sql.read",
+        "status": "success",
+        "row_count": 1,
+        "rows": [
+            {
+                "count": 42,
+            }
+        ],
+    }
+
+    state = {
+        "selected_tool": "python.analysis",
+        "tool_arguments": {
+            "operation": "summary",
+            "values": [10, 20, 30],
+        },
+        "user_id": "user-123",
+        "tool_results": [
+            previous_result,
+        ],
+    }
+
+    result = tool_execution_node(state)
+
+    assert result["status"] == AgentStatus.EXECUTING_TOOL
+
+    assert len(result["tool_results"]) == 2
+
+    assert result["tool_results"][0] == previous_result
+    assert result["tool_results"][1] == result["tool_result"]
 
 
 def test_unknown_tool_is_rejected():
@@ -152,7 +258,9 @@ def test_high_risk_tool_requires_approval_without_database():
     assert result["approval_granted"] is False
 
 
-def test_high_risk_tool_requires_task_id_with_database(db_session):
+def test_high_risk_tool_requires_task_id_with_database(
+    db_session,
+):
     state = {
         "selected_tool": "service.restart",
         "tool_arguments": {
@@ -171,7 +279,9 @@ def test_high_risk_tool_requires_task_id_with_database(db_session):
     assert "task_id" in result["error"]
 
 
-def test_high_risk_tool_creates_approval_request(db_session):
+def test_high_risk_tool_creates_approval_request(
+    db_session,
+):
     task = create_task(
         db_session,
         user_id="manager-123",
@@ -210,7 +320,9 @@ def test_high_risk_tool_creates_approval_request(db_session):
     assert approval.status == ApprovalStatus.PENDING.value
 
 
-def test_low_risk_policy_decision_is_audited(db_session):
+def test_low_risk_policy_decision_is_audited(
+    db_session,
+):
     task = create_task(db_session)
 
     state = {
@@ -245,7 +357,9 @@ def test_low_risk_policy_decision_is_audited(db_session):
     assert details["required_permission"] == "knowledge.read"
 
 
-def test_denied_policy_decision_is_audited(db_session):
+def test_denied_policy_decision_is_audited(
+    db_session,
+):
     task = create_task(
         db_session,
         user_id="user-123",
@@ -285,7 +399,9 @@ def test_denied_policy_decision_is_audited(db_session):
     assert details["required_permission"] == "operations.restart"
 
 
-def test_allowed_tool_invocation_is_audited(db_session):
+def test_allowed_tool_invocation_is_audited(
+    db_session,
+):
     task = create_task(db_session)
 
     state = {
@@ -318,7 +434,9 @@ def test_allowed_tool_invocation_is_audited(db_session):
     assert details["role"] == "operations_engineer"
 
 
-def test_successful_tool_completion_is_audited(db_session):
+def test_successful_tool_completion_is_audited(
+    db_session,
+):
     task = create_task(db_session)
 
     state = {
@@ -352,7 +470,9 @@ def test_successful_tool_completion_is_audited(db_session):
     assert details["status"] == "success"
 
 
-def test_high_risk_approval_does_not_execute_tool(db_session):
+def test_high_risk_approval_does_not_execute_tool(
+    db_session,
+):
     task = create_task(
         db_session,
         user_id="manager-123",
@@ -377,15 +497,20 @@ def test_high_risk_approval_does_not_execute_tool(db_session):
     assert result["approval_required"] is True
     assert result["approval_granted"] is False
     assert "tool_result" not in result
+    assert "tool_results" not in result
 
     events = get_audit_events(
         db_session,
         task.id,
     )
 
-    event_types = [event.event_type for event in events]
+    event_types = [
+        event.event_type
+        for event in events
+    ]
 
     assert "policy.checked" in event_types
     assert "approval.requested" in event_types
     assert "tool.invoked" not in event_types
     assert "tool.completed" not in event_types
+

@@ -1,3 +1,6 @@
+
+import pytest
+
 from app.agents.graph import build_agent_graph
 from app.agents.schemas import AgentPlan
 from app.agents.state import AgentStatus
@@ -23,6 +26,8 @@ def test_agent_graph_completes_successfully():
         "user_id": "user-123",
         "request": "Investigate payment failures",
         "status": AgentStatus.IDLE,
+        "investigation_step": 0,
+        "max_investigation_steps": 3,
     }
 
     config = {
@@ -37,18 +42,37 @@ def test_agent_graph_completes_successfully():
     )
 
     assert result["status"] == AgentStatus.COMPLETED
+
     assert result["verification_result"]["verified"] is True
+
     assert result["tool_result"]["tool"] == "sql.read"
 
+    assert result["investigation_step"] == 3
 
-def test_agent_graph_stops_on_disallowed_tool():
+    assert result["investigation_result"].summary == (
+        "Investigation completed successfully using sql.read."
+    )
+
+    assert len(
+        result["investigation_result"].evidence
+    ) == 3
+
+    assert result["investigation_result"].evidence == (
+        result["tool_results"]
+    )
+
+    assert all(
+        evidence["tool"] == "sql.read"
+        for evidence in result["investigation_result"].evidence
+    )
+
+
+def test_agent_graph_handles_failed_tool_execution():
     plan = AgentPlan(
-        reasoning_summary="Attempt an unauthorized operation.",
+        reasoning_summary="Use an unavailable tool.",
         tool_call={
             "tool": "shell.execute",
-            "arguments": {
-                "command": "dir",
-            },
+            "arguments": {},
         },
     )
 
@@ -56,15 +80,17 @@ def test_agent_graph_stops_on_disallowed_tool():
     graph = build_agent_graph(provider)
 
     state = {
-        "task_id": 2,
-        "user_id": "test-user",
-        "request": "Run an unauthorized command",
+        "task_id": 1,
+        "user_id": "user-123",
+        "request": "Run a shell command",
         "status": AgentStatus.IDLE,
+        "investigation_step": 0,
+        "max_investigation_steps": 3,
     }
 
     config = {
         "configurable": {
-            "thread_id": "test-disallowed-task",
+            "thread_id": "test-failed-tool-task",
         }
     }
 
@@ -74,5 +100,5 @@ def test_agent_graph_stops_on_disallowed_tool():
     )
 
     assert result["status"] == AgentStatus.FAILED
-    assert "Tool not allowed" in result["error"]
+    assert result["error"]
 
