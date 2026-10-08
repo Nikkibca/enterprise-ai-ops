@@ -49,6 +49,11 @@ jobs:
       - name: Compile
         run: python -m compileall app
 
+      - name: Initialize database
+        env:
+          APP_DATABASE_URL: postgresql+psycopg://app_user:app_password@localhost:5432/enterprise_ai_ops
+          SQL_READER_DATABASE_URL: postgresql+psycopg://sql_reader:sql_reader_password@localhost:5432/enterprise_ai_ops
+        run: python scripts/init_db.py
       - name: Test
         env:
           OPENAI_API_KEY: test-key
