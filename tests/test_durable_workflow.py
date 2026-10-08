@@ -10,10 +10,9 @@ from app.models import Task
 from app.workflow_runner import WorkflowRunner
 
 
-DATABASE_URL = (
-    "postgresql://"
-    "app_user:app_password@localhost:5433/"
-    "enterprise_ai_ops"
+DATABASE_URL = os.getenv(
+    "LANGGRAPH_CHECKPOINT_DATABASE_URL",
+    "postgresql://app_user:app_password@localhost:5433/enterprise_ai_ops",
 )
 
 
