@@ -1,17 +1,17 @@
+import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
-DATABASE_URL = (
-    "postgresql+psycopg://"
-    "app_user:app_password@localhost:5433/"
-    "enterprise_ai_ops"
+DATABASE_URL = os.getenv(
+    "APP_DATABASE_URL",
+    "postgresql+psycopg://app_user:app_password@localhost:5433/enterprise_ai_ops",
 )
 
-SQL_READER_DATABASE_URL = (
-    "postgresql+psycopg://"
-    "sql_reader:sql_reader_password@localhost:5433/"
-    "enterprise_ai_ops"
+SQL_READER_DATABASE_URL = os.getenv(
+    "SQL_READER_DATABASE_URL",
+    "postgresql+psycopg://sql_reader:sql_reader_password@localhost:5433/enterprise_ai_ops",
 )
 
 

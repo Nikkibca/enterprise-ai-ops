@@ -1,3 +1,5 @@
+import os
+
 from langgraph.checkpoint.postgres import PostgresSaver
 
 from app.agents.schemas import AgentPlan
