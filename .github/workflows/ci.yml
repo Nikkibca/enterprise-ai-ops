@@ -54,6 +54,12 @@ jobs:
           APP_DATABASE_URL: postgresql+psycopg://app_user:app_password@localhost:5432/enterprise_ai_ops
           SQL_READER_DATABASE_URL: postgresql+psycopg://sql_reader:sql_reader_password@localhost:5432/enterprise_ai_ops
         run: python scripts/init_db.py
+
+      - name: Configure read-only SQL role
+        env:
+          PGPASSWORD: app_password
+        run: psql -h localhost -p 5432 -U app_user -d enterprise_ai_ops -f scripts/create_readonly_role.sql
+
       - name: Test
         env:
           OPENAI_API_KEY: test-key
