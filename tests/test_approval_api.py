@@ -1494,4 +1494,74 @@ def test_cannot_reject_pending_approval_with_mismatched_checkpoint_tool(
         assert approval.decided_by is None
 
     finally:
-        db.close()        
+        db.close()
+
+
+
+def test_approve_resume_failure_leaves_approval_approved_and_task_failed(
+    client,
+    override_llm_provider,
+    monkeypatch,
+):
+    cleanup_database()
+
+    headers = auth_headers("manager-123")
+
+    task_response = client.post(
+        "/tasks",
+        json={"request": "Restart payment worker"},
+        headers=headers,
+    )
+    assert task_response.status_code == 200
+    task_id = task_response.json()["id"]
+
+    approval_response = client.post(
+        "/approvals",
+        json={
+            "task_id": task_id,
+            "tool_name": "service.restart",
+            "risk_level": "high",
+            "reason": "Regression test for resume failure.",
+        },
+        headers=headers,
+    )
+    assert approval_response.status_code == 201
+    approval_id = approval_response.json()["id"]
+
+    original_resume = WorkflowRunner.resume
+
+    def fail_graph_invoke(self, *args, **kwargs):
+        def failing_invoke(*invoke_args, **invoke_kwargs):
+            raise RuntimeError("Simulated workflow resume failure.")
+
+        monkeypatch.setattr(self.graph, "invoke", failing_invoke)
+        return original_resume(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        WorkflowRunner,
+        "resume",
+        fail_graph_invoke,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Simulated workflow resume failure.",
+    ):
+        client.post(
+            f"/approvals/{approval_id}/approve",
+            headers=headers,
+        )
+
+    db = SessionLocal()
+    try:
+        approval = db.get(ApprovalRequest, approval_id)
+        task = db.get(Task, task_id)
+
+        assert approval is not None
+        assert approval.status == "approved"
+        assert approval.decided_by == "manager-123"
+
+        assert task is not None
+        assert task.status == "failed"
+    finally:
+        db.close()
