@@ -1,4 +1,4 @@
-﻿# Enterprise AI Operations Platform
+# Enterprise AI Operations Platform
 
 An AI-powered operations platform built with **FastAPI, LangGraph, and PostgreSQL** that demonstrates how enterprise AI agents can execute tasks under controlled permissions, human approval gates, and auditable workflows.
 
@@ -40,125 +40,76 @@ This project demonstrates secure AI application engineering, workflow orchestrat
 
 ## Project architecture
 
-The application uses a workflow-oriented architecture in which an AI agent coordinates tasks and invokes registered tools. A policy engine evaluates permissions and risk, while approval gates help control higher-risk operations. PostgreSQL supports application data, audit records, and durable workflow checkpoints.
-(.venv) PS C:\Users\nikki\enterprise-ai-ops> Get-Content README.md -Tail 25
-* **SQL validation:** Validate read queries and maintain database-level read-only restrictions as defense in depth.
-* **Human approval:** Require approval for high-risk operations according to the configured policy.
-* **Auditability:** Treat audit records and approval decisions as security-sensitive data.
-* **Secrets management:** Never commit `.env` files, passwords, API keys, or production credentials.
-* **Database safety:** Use sample data only in development and test environments.
-* **Deployment hardening:** Configure appropriate network restrictions, HTTPS, secret management, database permissions, and operational monitoring before exposing the service publicly.
-
-This repository is a development and portfolio project. Review its authentication, authorization, infrastructure, and operational controls before using it in a production environment.
-
-## Project status
-
-The project includes an agent workflow, policy-based tool execution, approval controls for higher-risk actions, PostgreSQL-backed persistence, JWT authentication, audit logging, and automated tests.
-
-The current verified development milestone includes:
-
-* Application startup and health endpoint verified.
-* Interactive API documentation verified.
-* 260 local automated tests passing.
-* GitHub Actions CI passing for commit `d7d22ab`.
-
-These results describe the verified state at the time of writing; consult the repository and latest CI run for subsequent changes.
-
-## License
-
-No license has been specified yet. Add an appropriate `LICENSE` file before distributing this repository under an open-source license. Without a license, others generally do not receive permission to reuse, modify, or redistribute the code beyond applicable legal exceptions.
-
-* **AI agent orchestration:** Plan, execute, verify, and complete tasks through a LangGraph workflow.
-* **Human-in-the-loop approvals:** Require approval before executing higher-risk operations.
-* **Durable workflow execution:** Persist workflow checkpoints in PostgreSQL to support pausing and resuming execution.
-* **Policy-based authorization:** Evaluate user permissions and tool risk before execution.
-* **Read-only SQL access:** Validate read queries and use a dedicated database role with restricted privileges.
-* **Auditable operations:** Record operational events with sensitive-field redaction and database protections.
-* **JWT authentication:** Protect API operations using token-based authentication.
-* **Automated quality checks:** Run the test suite locally and through GitHub Actions CI.
-
-This project demonstrates secure AI application engineering, workflow orchestration, and enterprise-oriented backend design.
-
-## Technology stack
-
-* Python 3.12
-* FastAPI
-* LangGraph
-* PostgreSQL
-* SQLAlchemy
-* Psycopg
-* PyJWT
-* Pytest
-* Docker Compose
-* GitHub Actions
-
-## Project architecture
-
-The application uses a workflow-oriented architecture in which an AI agent coordinates tasks and invokes registered tools. A policy engine evaluates permissions and risk, while approval gates help control higher-risk operations. PostgreSQL supports application data, audit records, and durable workflow checkpoints.
+FastAPI exposes the API, while LangGraph coordinates planning, tool execution, verification, and completion. If a tool requires human approval, the workflow pauses and resumes after an approval decision.
 
 ```text
 Client
   |
   v
-FastAPI Application
-  |
-  v
-Authentication (JWT)
+FastAPI + JWT Authentication
   |
   v
 Workflow Service
   |
   v
-LangGraph Agent Workflow
-  |
-  +---- Planning
-  |
-  +---- Policy and Permission Checks
-  |
-  +---- Tool Execution
-  |       |
-  |       +---- Knowledge Search
-  |       +---- Read-only SQL
-  |       +---- Python Analysis
-  |       +---- Service Restart
-  |
-  +---- Human Approval for High-Risk Actions
-  |
-  +---- Verification and Completion
-  |
-  v
-Audit Logging and PostgreSQL Checkpoints
+Planning -> Tool Execution
+                |
+                +-- Failed ----------------> End
+                |
+                +-- Approval required
+                |       |
+                |       v
+                |   Human decision
+                |      /      \
+                |  Rejected  Approved
+                |     |         |
+                |    End        v
+                |       Approved Execution
+                |                |
+                +----------------v
+                           Verification
+                            /    |    \
+                       Failed  More   Finished
+                         |    steps      |
+                        End     |        v
+                                v    Completion
+                             Planning    |
+                                         v
+                                        End
 ```
+
+Policy checks, audit logging, database persistence, and LangGraph checkpointing support the workflow. The checkpoint backend depends on configuration.
+
 
 ## Project structure
 
 ```text
 enterprise-ai-ops/
-├── app/
-│   ├── agents/          # Agent graph, state, planning, execution, verification
-│   ├── audit/           # Audit logging services
-│   ├── llm/             # LLM provider settings and implementations
-│   ├── policy/          # Authorization, permissions, risk, policy engine
-│   ├── rag/             # External project client
-│   ├── tools/           # Tool registry and tool implementations
-│   ├── api.py           # API routes
-│   ├── main.py          # FastAPI application entry point
-│   ├── models.py        # Database models
-│   ├── workflow_runner.py
-│   └── workflow_service.py
-├── scripts/
-│   ├── init_db.py
-│   ├── create_readonly_role.sql
-│   ├── seed_data.py
-│   └── migrate_*.py
-├── tests/
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-├── docker-compose.yml
-├── requirements.txt
-├── .env.example
-└── README.md
++-- app/
+    +-- agents/          # Agent graph, state, planning, execution, verification
+    +-- audit/           # Audit logging services
+    +-- llm/             # LLM provider settings and implementations
+    +-- policy/          # Authorization, permissions, risk, policy engine
+    +-- rag/             # External project client
+    +-- tools/           # Tool registry and tool implementations
+    +-- api.py           # API routes
+    +-- main.py          # FastAPI application entry point
+    +-- models.py        # Database models
+    +-- workflow_runner.py
+    +-- workflow_service.py
++-- scripts/
+    +-- init_db.py
+    +-- create_readonly_role.sql
+    +-- seed_data.py
+    +-- migrate_*.py
++-- tests/
++-- .github/
+    +-- workflows/
+        +-- ci.yml
++-- docker-compose.yml
++-- requirements.txt
++-- .env.example
++-- README.md
 ```
 
 ## Prerequisites
