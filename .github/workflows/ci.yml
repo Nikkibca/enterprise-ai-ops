@@ -73,7 +73,7 @@ jobs:
           LANGGRAPH_CHECKPOINT_DATABASE_URL: postgresql://app_user:app_password@localhost:5432/enterprise_ai_ops
           APP_DATABASE_URL: postgresql+psycopg://app_user:app_password@localhost:5432/enterprise_ai_ops
           SQL_READER_DATABASE_URL: postgresql+psycopg://sql_reader:sql_reader_password@localhost:5432/enterprise_ai_ops
-          JWT_SECRET_KEY: test-secret-key-for-ci-only
+          JWT_SECRET_KEY: test-secret-key-for-ci-only-32-bytes
           JWT_ISSUER: enterprise-ai-ops
           JWT_AUDIENCE: enterprise-ai-ops-api
           JWT_ALGORITHM: HS256

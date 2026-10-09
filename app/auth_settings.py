@@ -1,3 +1,5 @@
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -6,6 +8,15 @@ class AuthSettings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_issuer: str = "enterprise-ai-ops"
     jwt_audience: str = "enterprise-ai-ops-api"
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def validate_jwt_secret_key(cls, value: str) -> str:
+        if len(value.strip()) < 32:
+            raise ValueError(
+                "JWT_SECRET_KEY must contain at least 32 characters."
+            )
+        return value
 
     model_config = SettingsConfigDict(
         env_file=".env",
