@@ -20,15 +20,14 @@ def claim_approved_execution(
     *,
     approval_id: int,
     executor: str,
+    commit: bool = True,
 ) -> bool:
     """
     Atomically claim an approved action for execution.
-
     Exactly one concurrent caller can successfully claim the
     approval. The claim is committed before the external tool
-    is invoked.
+    is invoked, unless the caller manages the transaction.
     """
-
     executor = executor.strip()
 
     if not executor:
@@ -42,8 +41,7 @@ def claim_approved_execution(
         update(ApprovalRequest)
         .where(
             ApprovalRequest.id == approval_id,
-            ApprovalRequest.status
-            == ApprovalStatus.APPROVED.value,
+            ApprovalRequest.status == ApprovalStatus.APPROVED.value,
             ApprovalRequest.execution_claimed_at.is_(None),
         )
         .values(
@@ -56,11 +54,10 @@ def claim_approved_execution(
         db.rollback()
         return False
 
-    db.commit()
+    if commit:
+        db.commit()
 
     return True
-
-
 
 def create_approval(
     db: Session,

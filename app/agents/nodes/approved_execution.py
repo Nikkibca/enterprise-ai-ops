@@ -5,14 +5,11 @@ from app.approval_guard import (
     ApprovalGuardError,
     require_approved_action,
 )
-
 from app.approval_service import (
     claim_approved_execution,
     get_approval,
 )
-
 from app.audit.service import record_audit_event
-from app.approval_service import get_approval
 from app.models import ApprovalStatus
 from app.tools.factory import create_tool_registry
 from app.tools.registry import ToolExecutionError
@@ -86,13 +83,7 @@ def approved_execution_node(
 
         approver = approver.strip()
 
-        claimed = claim_approved_execution(
-            db=db,
-            approval_id=approval_id,
-            executor=approver,
-        )
-
-        if not claimed:
+        if approval.execution_claimed_at is not None:
             return {
                 "status": AgentStatus.FAILED,
                 "error": (
@@ -100,7 +91,24 @@ def approved_execution_node(
                 ),
             }
 
+        # Claim the approval and record the invocation in one transaction.
+        # If either operation fails, roll back both before executing the tool.
         try:
+            claimed = claim_approved_execution(
+                db=db,
+                approval_id=approval_id,
+                executor=approver,
+                commit=False,
+            )
+
+            if not claimed:
+                return {
+                    "status": AgentStatus.FAILED,
+                    "error": (
+                        "Approved action has already been claimed for execution."
+                    ),
+                }
+
             record_audit_event(
                 db=db,
                 task_id=task_id,
@@ -112,14 +120,17 @@ def approved_execution_node(
                     "approval_id": approval_id,
                     "approved_by": approver,
                 },
+                commit=False,
             )
+
+            db.commit()
+
         except Exception as exc:
             db.rollback()
-
             return {
                 "status": AgentStatus.FAILED,
                 "error": str(exc),
-            }    
+            }
 
         registry = create_tool_registry()
 
@@ -129,10 +140,7 @@ def approved_execution_node(
                 tool_arguments,
             )
 
-        except (
-            ToolExecutionError,
-            ValueError,
-        ) as exc:
+        except (ToolExecutionError, ValueError) as exc:
             record_audit_event(
                 db=db,
                 task_id=task_id,
