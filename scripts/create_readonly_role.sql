@@ -1,4 +1,4 @@
-DO $$
+﻿DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT FROM pg_catalog.pg_roles
@@ -19,12 +19,3 @@ GRANT SELECT ON TABLE
     payments,
     payment_failures
 TO sql_reader;
-
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public
-TO sql_reader;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE app_user IN SCHEMA public
-GRANT SELECT ON TABLES TO sql_reader;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE app_user IN SCHEMA public
-GRANT USAGE, SELECT ON SEQUENCES TO sql_reader;

@@ -1,4 +1,4 @@
-from app.policy.engine import PolicyDecision, evaluate_tool
+﻿from app.policy.engine import PolicyDecision, evaluate_tool
 from app.policy.permissions import get_tool_risk
 from app.policy.risk import RiskLevel
 
@@ -115,4 +115,14 @@ def test_high_risk_policy_result_contains_authorization_metadata():
     assert result.decision == PolicyDecision.APPROVAL_REQUIRED
     assert result.user_id == "manager-123"
     assert result.role == "operations_manager"
-    assert result.required_permission == "operations.restart"    
+    assert result.required_permission == "operations.restart"
+
+def test_engineer_cannot_restart_service():
+    result = evaluate_tool(
+        tool_name="service.restart",
+        user_id="user-123",
+    )
+
+    assert result.decision == PolicyDecision.DENY
+    assert result.risk_level == RiskLevel.HIGH
+    assert result.required_permission == "operations.restart"
