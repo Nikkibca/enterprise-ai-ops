@@ -242,7 +242,7 @@ For a local PostgreSQL instance, execute it using your configured database admin
 
 ```powershell
 
-docker compose exec -T postgres psql -U app_user -d enterprise_ai_ops -f /dev/stdin < scripts/create_readonly_role.sql
+Get-Content .\scripts\create_readonly_role.sql | docker compose exec -T postgres psql -U app_user -d enterprise_ai_ops
 
 ```
 
@@ -343,6 +343,7 @@ The repository includes automated tests and a GitHub Actions CI workflow. Check 
 
 
 No license has been specified yet. Add a `LICENSE` file before redistributing this project under an open-source license.
+
 
 
 
