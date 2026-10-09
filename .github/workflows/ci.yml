@@ -64,7 +64,7 @@ jobs:
         env:
           APP_DATABASE_URL: postgresql+psycopg://app_user:app_password@localhost:5432/enterprise_ai_ops
           SQL_READER_DATABASE_URL: postgresql+psycopg://sql_reader:sql_reader_password@localhost:5432/enterprise_ai_ops
-        run: python scripts/seed_data.py
+        run: python -m scripts.seed_data
 
       - name: Test
         env:
