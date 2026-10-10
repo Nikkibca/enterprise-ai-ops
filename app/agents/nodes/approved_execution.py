@@ -132,15 +132,48 @@ def approved_execution_node(
                 "error": str(exc),
             }
 
-        registry = create_tool_registry()
-
         try:
+            registry = create_tool_registry()
             result = registry.execute(
                 selected_tool,
                 tool_arguments,
             )
+        except Exception as exc:
+            try:
+                record_audit_event(
+                    db=db,
+                    task_id=task_id,
+                    event_type="tool.completed",
+                    actor=approver,
+                    details={
+                        "tool_name": selected_tool,
+                        "risk_level": "high",
+                        "approval_id": approval_id,
+                        "approved_by": approver,
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                )
 
-        except (ToolExecutionError, ValueError) as exc:
+            except Exception as audit_exc:
+                db.rollback()
+                return {
+                    "status": AgentStatus.FAILED,
+                    "error": (
+                        "Tool execution failed or its outcome is uncertain; "
+                        "recording the completion audit also failed. "
+                        "Do not retry automatically. "
+                        f"Execution error: {exc}; "
+                        f"audit error: {audit_exc}"
+                    ),
+                }
+
+            return {
+                "status": AgentStatus.FAILED,
+                "error": str(exc),
+            }
+
+        try:
             record_audit_event(
                 db=db,
                 task_id=task_id,
@@ -151,39 +184,34 @@ def approved_execution_node(
                     "risk_level": "high",
                     "approval_id": approval_id,
                     "approved_by": approver,
-                    "status": "failed",
-                    "error": str(exc),
+                    "status": "success",
                 },
             )
-
+        except Exception as exc:
+            db.rollback()
             return {
                 "status": AgentStatus.FAILED,
-                "error": str(exc),
+                "error": (
+                    "The tool returned successfully, but its completion "
+                    "audit failed. The approval remains claimed; do not "
+                    f"retry automatically. Audit error: {exc}"
+                ),
             }
-
-        record_audit_event(
-            db=db,
-            task_id=task_id,
-            event_type="tool.completed",
-            actor=approver,
-            details={
-                "tool_name": selected_tool,
-                "risk_level": "high",
-                "approval_id": approval_id,
-                "approved_by": approver,
-                "status": "success",
-            },
-        )
+        return {
+            "status": AgentStatus.EXECUTING_ACTION,
+            "approval_granted": True,
+            "approval_decided_by": approver,
+            "tool_result": result,
+        }
 
     except ApprovalGuardError as exc:
         return {
             "status": AgentStatus.FAILED,
             "error": str(exc),
         }
-
-    return {
-        "status": AgentStatus.EXECUTING_ACTION,
-        "approval_granted": True,
-        "approval_decided_by": approver,
-        "tool_result": result,
-    }
+    except Exception as exc:
+        db.rollback()
+        return {
+            "status": AgentStatus.FAILED,
+            "error": f"Approved execution failed: {exc}",
+        }

@@ -778,3 +778,134 @@ def test_audit_failure_after_claim_does_not_repeat_execution(
     assert persisted_approval is not None
     assert persisted_approval.execution_claimed_at is None
     assert persisted_approval.execution_claimed_by is None
+
+
+def test_completion_audit_failure_does_not_repeat_execution(
+    db_session,
+    monkeypatch,
+):
+    task = create_task(db_session)
+
+    approval = create_pending_approval(
+        db_session,
+        task,
+    )
+
+    approve_request(
+        db=db_session,
+        approval_id=approval.id,
+        decided_by="manager",
+    )
+
+    execution_count = 0
+    audit_call_count = 0
+
+    class CountingRegistry:
+        def execute(self, tool_name, arguments):
+            nonlocal execution_count
+            execution_count += 1
+            return {
+                "tool": tool_name,
+                "status": "simulated",
+                "service": arguments["service"],
+            }
+
+    monkeypatch.setattr(
+        "app.agents.nodes.approved_execution.create_tool_registry",
+        lambda: CountingRegistry(),
+    )
+
+    def failing_completion_audit(*args, **kwargs):
+        nonlocal audit_call_count
+        audit_call_count += 1
+
+        if kwargs.get("event_type") == "tool.completed":
+            raise RuntimeError("Completion audit unavailable.")
+
+        return record_audit_event_original(*args, **kwargs)
+
+    from app.audit.service import record_audit_event as record_audit_event_original
+
+    monkeypatch.setattr(
+        "app.agents.nodes.approved_execution.record_audit_event",
+        failing_completion_audit,
+    )
+
+    state = {
+        "task_id": task.id,
+        "selected_tool": "service.restart",
+        "tool_arguments": {"service": "payment-worker"},
+        "approval_id": approval.id,
+        "user_id": "requester",
+    }
+
+    first_result = approved_execution_node(state, db=db_session)
+
+    assert first_result["status"] == AgentStatus.FAILED
+    assert "completion audit failed" in first_result["error"].lower()
+    assert execution_count == 1
+
+    db_session.expire_all()
+    persisted_approval = db_session.get(type(approval), approval.id)
+
+    assert persisted_approval is not None
+    assert persisted_approval.execution_claimed_at is not None
+
+    second_result = approved_execution_node(state, db=db_session)
+
+    assert second_result["status"] == AgentStatus.FAILED
+    assert "already been claimed" in second_result["error"].lower()
+    assert execution_count == 1
+
+
+def test_unexpected_tool_exception_is_handled_and_cannot_be_retried(
+    db_session,
+    monkeypatch,
+):
+    task = create_task(db_session)
+    approval = create_pending_approval(db_session, task)
+
+    approve_request(
+        db=db_session,
+        approval_id=approval.id,
+        decided_by="manager",
+    )
+
+    execution_count = 0
+
+    class UnexpectedFailureRegistry:
+        def execute(self, tool_name, arguments):
+            nonlocal execution_count
+            execution_count += 1
+            raise RuntimeError("Unexpected executor failure.")
+
+    monkeypatch.setattr(
+        "app.agents.nodes.approved_execution.create_tool_registry",
+        lambda: UnexpectedFailureRegistry(),
+    )
+
+    state = {
+        "task_id": task.id,
+        "selected_tool": "service.restart",
+        "tool_arguments": {"service": "payment-worker"},
+        "approval_id": approval.id,
+        "user_id": "requester",
+    }
+
+    first_result = approved_execution_node(state, db=db_session)
+
+    assert first_result["status"] == AgentStatus.FAILED
+    assert first_result["error"] == "Unexpected executor failure."
+    assert execution_count == 1
+
+    db_session.expire_all()
+    persisted_approval = db_session.get(type(approval), approval.id)
+
+    assert persisted_approval is not None
+    assert persisted_approval.execution_claimed_at is not None
+
+    second_result = approved_execution_node(state, db=db_session)
+
+    assert second_result["status"] == AgentStatus.FAILED
+    assert "already been claimed" in second_result["error"].lower()
+    assert execution_count == 1
