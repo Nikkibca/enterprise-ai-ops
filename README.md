@@ -249,6 +249,18 @@ https://github.com/Nikkibca/enterprise-ai-ops/actions
 * **Database safety:** Use sample data only in development and test environments.
 * **Deployment hardening:** Configure appropriate network restrictions, HTTPS, secret management, database permissions, and operational monitoring before exposing the service publicly.
 
+### JWT authentication
+
+Protected API endpoints require a valid JWT in the `Authorization: Bearer <token>` header. Tokens must contain a valid `sub` claim and match the configured issuer and audience.
+
+Configure these environment variables using `.env.example` as a template:
+
+* `JWT_SECRET_KEY`: A signing secret of at least 32 characters. Keep it private and never commit production secrets.
+* `JWT_ALGORITHM`: The permitted signing algorithm; defaults to `HS256`.
+* `JWT_ISSUER`: Expected token issuer; defaults to `enterprise-ai-ops`.
+* `JWT_AUDIENCE`: Expected token audience; defaults to `enterprise-ai-ops-api`.
+
+The application validates JWTs but does not provide a token-issuance endpoint. Obtain tokens from a trusted issuer configured with matching signing credentials, algorithm, issuer, and audience. Never use test secrets in production.
 This repository is a development and portfolio project. Review its authentication, authorization, infrastructure, and operational controls before using it in a production environment.
 
 ## Project status
