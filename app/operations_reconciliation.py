@@ -1,9 +1,12 @@
 ﻿import json
+import logging
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import ApprovalRequest, AuditEvent
+
+logger = logging.getLogger(__name__)
 
 
 def get_execution_reconciliation_report(
@@ -21,6 +24,10 @@ def get_execution_reconciliation_report(
     ).all()
 
     if not claimed_approvals:
+        logger.info(
+            "Execution reconciliation completed: "
+            "claimed=0, uncertain=0"
+        )
         return []
 
     approval_ids = {approval.id for approval in claimed_approvals}
@@ -46,14 +53,32 @@ def get_execution_reconciliation_report(
 
         approval_id = details.get("approval_id")
         outcome = details.get("status")
+        tool_name = details.get("tool_name")
 
         if (
             isinstance(approval_id, int)
             and not isinstance(approval_id, bool)
             and approval_id in approval_ids
+            and isinstance(outcome, str)
             and outcome in {"success", "failed"}
+            and isinstance(tool_name, str)
         ):
-            completed_approval_ids.add(approval_id)
+            matching_approval = next(
+                (
+                    approval
+                    for approval in claimed_approvals
+                    if approval.id == approval_id
+                ),
+                None,
+            )
+
+            if (
+                matching_approval is not None
+                and matching_approval.tool_name == tool_name
+                and matching_approval.task_id == event.task_id
+            ):
+                completed_approval_ids.add(approval_id)
+
 
     report = []
 

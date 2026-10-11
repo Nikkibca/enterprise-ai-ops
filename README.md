@@ -230,13 +230,47 @@ Run the complete test suite:
 python -m pytest -q
 ```
 
-The project has passed **260 automated tests** in the current verified local run. Test results may change as the code evolves.
+The project has passed **275 automated tests** in the latest verified local run. Test results may change as the code evolves.
 
 GitHub Actions CI also initializes its PostgreSQL test database, configures the read-only role, seeds sample data, and runs automated checks.
 
 Check the repository's Actions page for the latest CI result:
 
 https://github.com/Nikkibca/enterprise-ai-ops/actions
+
+## Execution Reconciliation and Manual Recovery
+
+Approved high-risk tool executions are claimed before the tool is invoked. If a completion audit event is missing or invalid, the execution outcome must be treated as uncertain.
+
+The read-only reconciliation endpoint is:
+
+`GET /operations/execution-reconciliation`
+
+Access requires the `operations.restart` permission. The response identifies claimed executions that do not have a matching valid completion audit event. This report does not establish whether an external operation succeeded or failed.
+
+### Operator investigation procedure
+
+For each item reported as uncertain:
+
+1. **Identify the execution.** Record the approval ID, task ID, tool name, claim timestamp, and claiming identity.
+2. **Inspect the approval.** Verify the persisted approval decision, approver identity, task ID, and tool name.
+3. **Inspect the audit trail.** Review the `tool.invoked` event and search for matching `tool.completed` events. Check the approval ID, task ID, tool name, outcome, timestamp, and actor. Investigate malformed, missing, or inconsistent records.
+4. **Verify the external outcome.** Consult the relevant system of record or service logs to determine whether the original operation took effect. Do not infer failure from a missing completion event.
+5. **Document the investigation.** Record the evidence reviewed, findings, operator identity, timestamp, and any follow-up action in the approved operational record.
+6. **Escalate unresolved cases.** If the external outcome cannot be established, leave the execution unresolved and escalate it to the designated operations or security owner.
+7. **Authorize recovery explicitly.** Consider a corrective or replacement action only after verifying the original outcome, confirming that the action is safe, and obtaining the required authorization under the applicable operational procedure.
+
+### Recovery safeguards
+
+- Never automatically retry an execution because its completion audit event is missing.
+- Do not clear an execution claim or alter approval records merely to make the execution eligible for another attempt.
+- Do not manually fabricate a completion event to make an uncertain execution appear successful or failed.
+- Preserve the original approval and audit evidence.
+- Record the rationale, authorization, and evidence for any approved recovery action.
+- If the external outcome remains uncertain, do not repeat a potentially non-idempotent operation.
+- The reconciliation endpoint is read-only; it does not execute tools, repair audit records, or reset claims.
+
+These procedures support investigation and controlled recovery. They do not provide an exactly-once execution guarantee across process crashes, external side effects, or audit persistence failures.
 
 ## Security considerations
 
@@ -271,8 +305,8 @@ The current verified development milestone includes:
 
 * Application startup and health endpoint verified.
 * Interactive API documentation verified.
-* 260 local automated tests passing.
-* GitHub Actions CI passing for commit `d7d22ab`.
+* 275 local automated tests passing.
+* Check the GitHub Actions page for the latest CI result.
 
 These results describe the verified state at the time of writing; consult the repository and latest CI run for subsequent changes.
 

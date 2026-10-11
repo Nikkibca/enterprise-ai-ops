@@ -1,4 +1,4 @@
-﻿import json
+import json
 from datetime import datetime, timezone
 
 from app.audit.service import record_audit_event
@@ -140,3 +140,90 @@ def test_report_does_not_modify_database_records(db_session):
     assert approval.execution_claimed_by == original_claimed_by
     assert approval.status == original_status
     assert db_session.query(AuditEvent).count() == audit_count_before
+
+
+def test_report_does_not_accept_completion_for_wrong_tool(db_session):
+    task, approval = create_claimed_approval(db_session)
+
+    record_audit_event(
+        db_session,
+        task_id=task.id,
+        event_type="tool.completed",
+        actor="manager-123",
+        details={
+            "approval_id": approval.id,
+            "tool_name": "service.delete",
+            "status": "success",
+        },
+    )
+
+    report = get_execution_reconciliation_report(db_session)
+
+    assert [item["approval_id"] for item in report] == [approval.id]
+
+
+def test_report_does_not_accept_completion_for_wrong_task(db_session):
+    _, approval = create_claimed_approval(db_session)
+
+    other_task = Task(
+        user_id="user-456",
+        request="Unrelated task",
+        status="executing",
+    )
+    db_session.add(other_task)
+    db_session.flush()
+
+    record_audit_event(
+        db_session,
+        task_id=other_task.id,
+        event_type="tool.completed",
+        actor="manager-123",
+        details={
+            "approval_id": approval.id,
+            "tool_name": approval.tool_name,
+            "status": "success",
+        },
+    )
+
+    report = get_execution_reconciliation_report(db_session)
+
+    assert [item["approval_id"] for item in report] == [approval.id]
+
+def test_report_does_not_accept_completion_with_invalid_status(db_session):
+    task, approval = create_claimed_approval(db_session)
+
+    record_audit_event(
+        db_session,
+        task_id=task.id,
+        event_type="tool.completed",
+        actor="manager-123",
+        details={
+            "approval_id": approval.id,
+            "tool_name": approval.tool_name,
+            "status": "completed",
+        },
+    )
+
+    report = get_execution_reconciliation_report(db_session)
+
+    assert [item["approval_id"] for item in report] == [approval.id]
+
+
+def test_report_does_not_accept_boolean_approval_id(db_session):
+    task, approval = create_claimed_approval(db_session)
+
+    record_audit_event(
+        db_session,
+        task_id=task.id,
+        event_type="tool.completed",
+        actor="manager-123",
+        details={
+            "approval_id": True,
+            "tool_name": approval.tool_name,
+            "status": "success",
+        },
+    )
+
+    report = get_execution_reconciliation_report(db_session)
+
+    assert [item["approval_id"] for item in report] == [approval.id]
