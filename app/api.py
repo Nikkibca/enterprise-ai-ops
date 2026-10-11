@@ -1,6 +1,8 @@
-
+﻿
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from app.operations_reconciliation import get_execution_reconciliation_report
+
 
 from app.agents.state import AgentStatus
 from app.approval_service import (
@@ -25,6 +27,7 @@ from app.models import (
     TaskStatus,
     ApprovalStatus,
 )
+from app.policy import permissions
 from app.policy.permissions import get_user_permissions
 from app.schemas import (
     ApprovalResponse,
@@ -552,3 +555,20 @@ def reject_approval_endpoint(
 
     return approval
 
+@router.get("/operations/execution-reconciliation")
+def execution_reconciliation_endpoint(
+    principal: AuthenticatedPrincipal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+    permissions = get_user_permissions(principal.user_id)
+
+    if "operations.restart" not in permissions:
+        raise HTTPException(
+            status_code=403,
+            detail="User is not authorized to view execution reconciliation.",
+        )
+
+    return {
+        "items": get_execution_reconciliation_report(db),
+        "read_only": True,
+    }
