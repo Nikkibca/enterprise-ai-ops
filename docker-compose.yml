@@ -3,9 +3,9 @@ services:
     image: pgvector/pgvector:pg17
     container_name: enterprise-ai-ops-postgres
     environment:
-      POSTGRES_DB: enterprise_ai_ops
-      POSTGRES_USER: app_user
-      POSTGRES_PASSWORD: app_password
+      POSTGRES_DB: ${POSTGRES_DB:-enterprise_ai_ops}
+      POSTGRES_USER: ${POSTGRES_USER:-app_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
