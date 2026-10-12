@@ -80,3 +80,10 @@ def test_select_is_case_insensitive():
     result = validate_read_only_sql(query)
 
     assert result == query
+
+
+def test_select_into_table_is_rejected():
+    query = "SELECT * INTO copied_payments FROM payments"
+
+    with pytest.raises(SQLValidationError):
+        validate_read_only_sql(query)

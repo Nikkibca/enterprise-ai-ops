@@ -42,6 +42,12 @@ def validate_read_only_sql(query: str) -> str:
             "Multiple SQL statements are not allowed."
         )
 
+    # SELECT ... INTO can create a table in PostgreSQL.
+    if re.search(r"\bINTO\b", normalized, re.IGNORECASE):
+        raise SQLValidationError(
+            "SELECT INTO is not allowed."
+        )
+
     # Reject explicitly dangerous SQL keywords.
     for statement in FORBIDDEN_STATEMENTS:
         if re.search(
