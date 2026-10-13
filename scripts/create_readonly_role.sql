@@ -11,6 +11,8 @@ BEGIN
 END
 $$;
 
+REVOKE TEMPORARY ON DATABASE enterprise_ai_ops FROM PUBLIC;
+
 GRANT CONNECT ON DATABASE enterprise_ai_ops TO sql_reader;
 
 GRANT USAGE ON SCHEMA public TO sql_reader;
