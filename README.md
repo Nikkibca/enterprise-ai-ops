@@ -230,7 +230,7 @@ Run the complete test suite:
 python -m pytest -q
 ```
 
-The project has passed **275 automated tests** in the latest verified local run. Test results may change as the code evolves.
+The project has passed **278 automated tests** in the latest verified local run. Test results may change as the code evolves.
 
 GitHub Actions CI also initializes its PostgreSQL test database, configures the read-only role, seeds sample data, and runs automated checks.
 
@@ -305,7 +305,7 @@ The current verified development milestone includes:
 
 * Application startup and health endpoint verified.
 * Interactive API documentation verified.
-* 275 local automated tests passing.
+* 278 local automated tests passing.
 * Check the GitHub Actions page for the latest CI result.
 
 These results describe the verified state at the time of writing; consult the repository and latest CI run for subsequent changes.
