@@ -309,6 +309,14 @@ def create_approval_endpoint(
 
     selected_tool = workflow_state.get("selected_tool")
 
+    tool_arguments = workflow_state.get("tool_arguments")
+
+    if not isinstance(tool_arguments, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Workflow tool arguments are invalid.",
+        )
+
     if selected_tool != payload.tool_name:
         raise HTTPException(
             status_code=400,
@@ -325,6 +333,7 @@ def create_approval_endpoint(
         risk_level=payload.risk_level,
         requested_by=principal.user_id,
         reason=payload.reason,
+        tool_arguments=tool_arguments,
     )
 
     return approval

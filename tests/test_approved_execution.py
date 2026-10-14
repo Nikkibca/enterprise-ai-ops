@@ -31,6 +31,7 @@ def create_pending_approval(db_session, task):
         risk_level="high",
         requested_by="requester",
         reason="High-risk operation requires human approval.",
+        tool_arguments={"service": "payment-worker"},
     )
 
 def test_approved_execution_runs_tool(db_session):

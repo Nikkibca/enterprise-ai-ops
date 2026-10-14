@@ -31,6 +31,7 @@ def create_pending_approval(db_session, task):
         risk_level="high",
         requested_by="requester",
         reason="High-risk operation requires human approval.",
+        tool_arguments={},
     )
 
 
@@ -132,6 +133,7 @@ def test_approval_for_different_tool_is_rejected(db_session):
         risk_level="high",
         requested_by="requester",
         reason="High-risk operation requires human approval.",
+        tool_arguments={},
     )
 
     approve_request(

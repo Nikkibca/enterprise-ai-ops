@@ -15,6 +15,9 @@ from scripts.migrate_approval_constraints import (
 from scripts.migrate_approval_execution_claim import (
     main as migrate_approval_execution_claim,
 )
+from scripts.migrate_approval_tool_arguments import (
+    main as migrate_approval_tool_arguments,
+)
 from scripts.migrate_audit_append_only import (
     main as migrate_audit_append_only,
 )
@@ -24,6 +27,7 @@ Base.metadata.create_all(bind=engine)
 
 migrate_approval_execution_claim()
 migrate_approval_constraints()
+migrate_approval_tool_arguments()
 migrate_audit_append_only()
 
 print("Database schema initialized successfully.")

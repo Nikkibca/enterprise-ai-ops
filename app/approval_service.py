@@ -15,6 +15,7 @@ class ApprovalNotFoundError(Exception):
 class InvalidApprovalStateError(Exception):
     pass
 
+
 def claim_approved_execution(
     db: Session,
     *,
@@ -23,17 +24,15 @@ def claim_approved_execution(
     commit: bool = True,
 ) -> bool:
     """
-    Atomically claim an approved action for execution.
-    Exactly one concurrent caller can successfully claim the
-    approval. The claim is committed before the external tool
-    is invoked, unless the caller manages the transaction.
+    Atomically claim an approved request for execution.
+
+    Only one executor can claim an approval. If commit=False, the caller
+    controls the transaction.
     """
     executor = executor.strip()
 
     if not executor:
-        raise ValueError(
-            "Execution claimant identity cannot be empty."
-        )
+        raise ValueError("Execution claimant identity cannot be empty.")
 
     now = datetime.now(timezone.utc)
 
@@ -59,14 +58,18 @@ def claim_approved_execution(
 
     return True
 
-def create_approval(
+
+def _get_matching_pending_approval(
     db: Session,
+    *,
     task_id: int,
     tool_name: str,
-    risk_level: str,
-    requested_by: str,
-    reason: str,
-) -> ApprovalRequest:
+    tool_arguments: dict,
+) -> ApprovalRequest | None:
+    """
+    Return an existing pending approval only when its argument snapshot
+    matches the newly requested arguments exactly.
+    """
     existing = db.execute(
         select(ApprovalRequest)
         .where(
@@ -77,12 +80,52 @@ def create_approval(
         .order_by(ApprovalRequest.id)
     ).scalar_one_or_none()
 
+    if existing is None:
+        return None
+
+    if existing.tool_arguments != tool_arguments:
+        raise InvalidApprovalStateError(
+            "A pending approval already exists for this task and tool "
+            "with different arguments."
+        )
+
+    return existing
+
+
+def create_approval(
+    db: Session,
+    task_id: int,
+    tool_name: str,
+    risk_level: str,
+    requested_by: str,
+    reason: str,
+    *,
+    tool_arguments: dict,
+) -> ApprovalRequest:
+    """
+    Create an approval request and persist the exact tool-argument
+    snapshot that the human is being asked to approve.
+
+    Repeated requests may reuse an existing pending approval only if the
+    tool arguments match the saved snapshot.
+    """
+    if not isinstance(tool_arguments, dict):
+        raise ValueError("Tool arguments must be a dictionary.")
+
+    existing = _get_matching_pending_approval(
+        db,
+        task_id=task_id,
+        tool_name=tool_name,
+        tool_arguments=tool_arguments,
+    )
+
     if existing is not None:
         return existing
 
     approval = ApprovalRequest(
         task_id=task_id,
         tool_name=tool_name,
+        tool_arguments=tool_arguments,
         risk_level=risk_level,
         requested_by=requested_by,
         reason=reason,
@@ -95,20 +138,16 @@ def create_approval(
     try:
         db.flush()
     except IntegrityError:
-        # Another transaction may have created the same pending approval
-        # between our SELECT and INSERT. The PostgreSQL partial unique
-        # index makes that race safe at the database level.
         db.rollback()
 
-        existing = db.execute(
-            select(ApprovalRequest)
-            .where(
-                ApprovalRequest.task_id == task_id,
-                ApprovalRequest.tool_name == tool_name,
-                ApprovalRequest.status == ApprovalStatus.PENDING.value,
-            )
-            .order_by(ApprovalRequest.id)
-        ).scalar_one_or_none()
+        # A concurrent request may have created the pending approval.
+        # Reuse it only if its saved arguments match exactly.
+        existing = _get_matching_pending_approval(
+            db,
+            task_id=task_id,
+            tool_name=tool_name,
+            tool_arguments=tool_arguments,
+        )
 
         if existing is not None:
             return existing
@@ -149,63 +188,79 @@ def get_approval(
     return approval
 
 
-def _transition_approval(
+def _decide_request(
     db: Session,
+    *,
     approval_id: int,
     decided_by: str,
-    target_status: str,
+    new_status: ApprovalStatus,
     event_type: str,
-    error_message: str,
 ) -> ApprovalRequest:
-    decided_at = datetime.now(timezone.utc)
+    """
+    Atomically transition a pending approval to its final decision.
 
-    result = db.execute(
-        update(ApprovalRequest)
-        .where(
-            ApprovalRequest.id == approval_id,
-            ApprovalRequest.status == ApprovalStatus.PENDING.value,
+    The status update and audit event are committed together. If audit
+    recording fails, the transaction is rolled back.
+    """
+    decided_by = decided_by.strip()
+
+    if not decided_by:
+        raise ValueError("Decision-maker identity cannot be empty.")
+
+    now = datetime.now(timezone.utc)
+
+    try:
+        result = db.execute(
+            update(ApprovalRequest)
+            .where(
+                ApprovalRequest.id == approval_id,
+                ApprovalRequest.status == ApprovalStatus.PENDING.value,
+            )
+            .values(
+                status=new_status.value,
+                decided_by=decided_by,
+                decided_at=now,
+            )
         )
-        .values(
-            status=target_status,
-            decided_by=decided_by,
-            decided_at=decided_at,
-        )
-    )
 
-    if result.rowcount != 1:
-        approval = db.get(ApprovalRequest, approval_id)
+        if result.rowcount != 1:
+            db.rollback()
 
-        if approval is None:
-            raise ApprovalNotFoundError(
-                f"Approval request not found: {approval_id}"
+            approval = db.get(ApprovalRequest, approval_id)
+
+            if approval is None:
+                raise ApprovalNotFoundError(
+                    f"Approval request not found: {approval_id}"
+                )
+
+            raise InvalidApprovalStateError(
+                f"Approval request {approval_id} is already "
+                f"{approval.status} and cannot be changed."
             )
 
-        raise InvalidApprovalStateError(error_message)
-
-    approval = db.get(ApprovalRequest, approval_id)
-
-    if approval is None:
-        db.rollback()
-        raise ApprovalNotFoundError(
-            f"Approval request not found: {approval_id}"
+        record_audit_event(
+            db=db,
+            task_id=db.execute(
+                select(ApprovalRequest.task_id).where(
+                    ApprovalRequest.id == approval_id
+                )
+            ).scalar_one(),
+            event_type=event_type,
+            actor=decided_by,
+            details={
+                "approval_id": approval_id,
+                "status": new_status.value,
+            },
+            commit=False,
         )
 
-    record_audit_event(
-        db=db,
-        task_id=approval.task_id,
-        event_type=event_type,
-        actor=decided_by,
-        details={
-            "approval_id": approval.id,
-            "tool_name": approval.tool_name,
-        },
-        commit=False,
-    )
+        db.commit()
 
-    db.commit()
-    db.refresh(approval)
+    except Exception:
+        db.rollback()
+        raise
 
-    return approval
+    return get_approval(db=db, approval_id=approval_id)
 
 
 def approve_request(
@@ -213,15 +268,12 @@ def approve_request(
     approval_id: int,
     decided_by: str,
 ) -> ApprovalRequest:
-    return _transition_approval(
-        db=db,
+    return _decide_request(
+        db,
         approval_id=approval_id,
         decided_by=decided_by,
-        target_status=ApprovalStatus.APPROVED.value,
+        new_status=ApprovalStatus.APPROVED,
         event_type="approval.granted",
-        error_message=(
-            "Only pending approval requests can be approved."
-        ),
     )
 
 
@@ -230,13 +282,10 @@ def reject_request(
     approval_id: int,
     decided_by: str,
 ) -> ApprovalRequest:
-    return _transition_approval(
-        db=db,
+    return _decide_request(
+        db,
         approval_id=approval_id,
         decided_by=decided_by,
-        target_status=ApprovalStatus.REJECTED.value,
+        new_status=ApprovalStatus.REJECTED,
         event_type="approval.rejected",
-        error_message=(
-            "Only pending approval requests can be rejected."
-        ),
     )

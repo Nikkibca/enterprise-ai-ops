@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 from app.auth_settings import AuthSettings
 from app.authentication import get_current_principal
 
-
 def create_test_app() -> FastAPI:
     app = FastAPI()
 
@@ -18,7 +17,6 @@ def create_test_app() -> FastAPI:
         }
 
     return app
-
 
 def create_token(
     user_id: str,
@@ -43,7 +41,6 @@ def create_token(
         algorithm=settings.jwt_algorithm,
     )
 
-
 def test_jwt_authenticated_principal_is_created():
     client = TestClient(create_test_app())
 
@@ -61,7 +58,6 @@ def test_jwt_authenticated_principal_is_created():
         "user_id": "user-123",
     }
 
-
 def test_missing_token_is_rejected():
     client = TestClient(create_test_app())
 
@@ -71,7 +67,6 @@ def test_missing_token_is_rejected():
     assert response.json()["detail"] == (
         "Authentication required."
     )
-
 
 def test_invalid_jwt_is_rejected():
     client = TestClient(create_test_app())
@@ -87,7 +82,6 @@ def test_invalid_jwt_is_rejected():
     assert response.json()["detail"] == (
         "Invalid authentication token."
     )
-
 
 def test_jwt_without_subject_is_rejected():
     settings = AuthSettings()
@@ -117,7 +111,6 @@ def test_jwt_without_subject_is_rejected():
     assert response.json()["detail"] == (
         "Authentication token does not contain a valid subject."
     )
-
 
 def test_jwt_with_wrong_secret_is_rejected():
     settings = AuthSettings()
@@ -149,7 +142,6 @@ def test_jwt_with_wrong_secret_is_rejected():
         "Invalid authentication token."
     )
 
-
 def test_non_bearer_authentication_is_rejected():
     client = TestClient(create_test_app())
 
@@ -164,7 +156,6 @@ def test_non_bearer_authentication_is_rejected():
     assert response.json()["detail"] == (
         "Authentication required."
     )
-
 
 def test_bearer_token_with_blank_subject_is_rejected():
     settings = AuthSettings()
@@ -196,7 +187,6 @@ def test_bearer_token_with_blank_subject_is_rejected():
         "Authentication token does not contain a valid subject."
     )
 
-
 def test_jwt_subject_is_used_as_authenticated_user():
     client = TestClient(create_test_app())
 
@@ -214,7 +204,6 @@ def test_jwt_subject_is_used_as_authenticated_user():
     assert response.json() == {
         "user_id": "manager-123",
     }
-
 
 def test_expired_jwt_is_rejected():
     client = TestClient(create_test_app())
@@ -236,7 +225,6 @@ def test_expired_jwt_is_rejected():
         "Invalid authentication token."
     )
 
-
 def test_wrong_issuer_is_rejected():
     client = TestClient(create_test_app())
 
@@ -257,7 +245,6 @@ def test_wrong_issuer_is_rejected():
         "Invalid authentication token."
     )
 
-
 def test_wrong_audience_is_rejected():
     client = TestClient(create_test_app())
 
@@ -265,6 +252,35 @@ def test_wrong_audience_is_rejected():
         "user-123",
         audience="wrong-audience",
     )
+
+    response = client.get(
+        "/me",
+        headers={
+            "Authorization": f"Bearer {token}",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == (
+        "Invalid authentication token."
+    )
+
+def test_jwt_without_expiration_is_rejected():
+    settings = AuthSettings()
+    now = datetime.now(timezone.utc)
+
+    token = jwt.encode(
+        {
+            "sub": "user-123",
+            "iss": settings.jwt_issuer,
+            "aud": settings.jwt_audience,
+            "iat": now,
+        },
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    client = TestClient(create_test_app())
 
     response = client.get(
         "/me",

@@ -12,7 +12,6 @@ from app.approval_service import (
 from app.audit.service import record_audit_event
 from app.models import ApprovalStatus
 from app.tools.factory import create_tool_registry
-from app.tools.registry import ToolExecutionError
 
 
 def approved_execution_node(
@@ -22,11 +21,10 @@ def approved_execution_node(
     """
     Execute a previously approved high-risk tool.
 
-    The persisted approval record is the authoritative source for
-    the approver identity. Checkpoint state is not trusted as the
-    authorization source.
+    The persisted approval record is authoritative for the approved
+    tool arguments and approver identity. Checkpoint state is not
+    trusted as the authorization source.
     """
-
     approval_id = state.get("approval_id")
     task_id = state.get("task_id")
     selected_tool = state.get("selected_tool")
@@ -63,6 +61,41 @@ def approved_execution_node(
             approval_id=approval_id,
         )
 
+        if approval is None:
+            return {
+                "status": AgentStatus.FAILED,
+                "error": "Approval request was not found.",
+            }
+
+        # The persisted snapshot is authoritative.
+        approved_arguments = approval.tool_arguments
+
+        # Legacy approvals without a snapshot must fail closed.
+        if not isinstance(approved_arguments, dict):
+            return {
+                "status": AgentStatus.FAILED,
+                "error": (
+                    "Approval has no valid persisted tool-arguments "
+                    "snapshot. A new approval is required."
+                ),
+            }
+
+        if not isinstance(tool_arguments, dict):
+            return {
+                "status": AgentStatus.FAILED,
+                "error": "Workflow tool arguments are invalid.",
+            }
+
+        # Prevent checkpoint arguments from being altered after approval.
+        if tool_arguments != approved_arguments:
+            return {
+                "status": AgentStatus.FAILED,
+                "error": (
+                    "Workflow tool arguments do not match the approved "
+                    "arguments. Execution is blocked."
+                ),
+            }
+
         if approval.status != ApprovalStatus.APPROVED.value:
             return {
                 "status": AgentStatus.FAILED,
@@ -91,8 +124,8 @@ def approved_execution_node(
                 ),
             }
 
-        # Claim the approval and record the invocation in one transaction.
-        # If either operation fails, roll back both before executing the tool.
+        # Claim the approval and record invocation in one transaction.
+        # If either operation fails, roll back before invoking the tool.
         try:
             claimed = claim_approved_execution(
                 db=db,
@@ -102,6 +135,7 @@ def approved_execution_node(
             )
 
             if not claimed:
+                db.rollback()
                 return {
                     "status": AgentStatus.FAILED,
                     "error": (
@@ -132,12 +166,14 @@ def approved_execution_node(
                 "error": str(exc),
             }
 
+        # Execute only the persisted, approved snapshot, not checkpoint state.
         try:
             registry = create_tool_registry()
             result = registry.execute(
                 selected_tool,
-                tool_arguments,
+                approved_arguments,
             )
+
         except Exception as exc:
             try:
                 record_audit_event(
@@ -154,7 +190,6 @@ def approved_execution_node(
                         "error": str(exc),
                     },
                 )
-
             except Exception as audit_exc:
                 db.rollback()
                 return {
@@ -197,6 +232,7 @@ def approved_execution_node(
                     f"retry automatically. Audit error: {exc}"
                 ),
             }
+
         return {
             "status": AgentStatus.EXECUTING_ACTION,
             "approval_granted": True,
@@ -209,6 +245,7 @@ def approved_execution_node(
             "status": AgentStatus.FAILED,
             "error": str(exc),
         }
+
     except Exception as exc:
         db.rollback()
         return {

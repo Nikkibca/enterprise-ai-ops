@@ -138,6 +138,7 @@ def tool_execution_node(
                 risk_level=policy_result.risk_level.value,
                 requested_by=state.get("user_id", "unknown"),
                 reason=policy_result.reason,
+                tool_arguments=tool_call.arguments,
             )
 
             _sync_status(

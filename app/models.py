@@ -6,6 +6,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
 )
@@ -70,6 +71,11 @@ class Task(Base):
 
 class ApprovalRequest(Base):
     __tablename__ = "approval_requests"
+
+    tool_arguments: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
 
     id: Mapped[int] = mapped_column(
         primary_key=True

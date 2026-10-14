@@ -27,6 +27,7 @@ def _authenticate_jwt(
             algorithms=[settings.jwt_algorithm],
             issuer=settings.jwt_issuer,
             audience=settings.jwt_audience,
+            options={"require": ["exp"]},
         )
     except jwt.InvalidTokenError as exc:
         raise HTTPException(

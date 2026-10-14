@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -9,18 +10,29 @@ from app.approval_service import (
     get_approval,
     reject_request,
 )
-from app.models import ApprovalRequest, ApprovalStatus, AuditEvent, Task
-
-from concurrent.futures import ThreadPoolExecutor
-
-from app.approval_service import approve_request
 from app.db import SessionLocal
 from app.models import (
     ApprovalRequest,
     ApprovalStatus,
+    AuditEvent,
     Task,
     TaskStatus,
 )
+
+
+DEFAULT_TOOL_ARGUMENTS = {"service": "payment-worker"}
+
+
+def create_test_task(db):
+    task = Task(
+        user_id="user-123",
+        request="Restart payment worker",
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
 
 def test_concurrent_approval_and_rejection_only_allow_one_decision(
     db_session,
@@ -30,7 +42,6 @@ def test_concurrent_approval_and_rejection_only_allow_one_decision(
         request="Restart payment worker",
         status=TaskStatus.CREATED.value,
     )
-
     db_session.add(task)
     db_session.commit()
     db_session.refresh(task)
@@ -38,12 +49,12 @@ def test_concurrent_approval_and_rejection_only_allow_one_decision(
     approval = ApprovalRequest(
         task_id=task.id,
         tool_name="service.restart",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
         risk_level="high",
         requested_by="requester-123",
         reason="High-risk operation requires human approval.",
         status=ApprovalStatus.PENDING.value,
     )
-
     db_session.add(approval)
     db_session.commit()
     db_session.refresh(approval)
@@ -52,7 +63,6 @@ def test_concurrent_approval_and_rejection_only_allow_one_decision(
 
     def decide(decision: str, user_id: str):
         session = SessionLocal()
-
         try:
             if decision == "approve":
                 result = approve_request(
@@ -73,17 +83,14 @@ def test_concurrent_approval_and_rejection_only_allow_one_decision(
                 "user_id": user_id,
                 "result": result,
             }
-
         except InvalidApprovalStateError as exc:
             session.rollback()
-
             return {
                 "success": False,
                 "decision": decision,
                 "user_id": user_id,
                 "error": exc,
             }
-
         finally:
             session.close()
 
@@ -93,61 +100,36 @@ def test_concurrent_approval_and_rejection_only_allow_one_decision(
             "approve",
             "manager-001",
         )
-
         reject_future = executor.submit(
             decide,
             "reject",
             "manager-002",
         )
-
         approve_result = approve_future.result()
         reject_result = reject_future.result()
 
-    results = [
-        approve_result,
-        reject_result,
-    ]
-
-    successful = [
-        result
-        for result in results
-        if result["success"]
-    ]
-
-    failed = [
-        result
-        for result in results
-        if not result["success"]
-    ]
+    results = [approve_result, reject_result]
+    successful = [result for result in results if result["success"]]
+    failed = [result for result in results if not result["success"]]
 
     assert len(successful) == 1
     assert len(failed) == 1
-
-    assert isinstance(
-        failed[0]["error"],
-        InvalidApprovalStateError,
-    )
+    assert isinstance(failed[0]["error"], InvalidApprovalStateError)
 
     db_session.expire_all()
-
-    final_approval = db_session.get(
-        ApprovalRequest,
-        approval_id,
-    )
+    final_approval = db_session.get(ApprovalRequest, approval_id)
 
     assert final_approval is not None
-
     assert final_approval.status in {
         ApprovalStatus.APPROVED.value,
         ApprovalStatus.REJECTED.value,
     }
-
     assert final_approval.decided_by in {
         "manager-001",
         "manager-002",
     }
-
     assert final_approval.decided_at is not None
+
 
 def test_concurrent_approval_requests_only_allow_one_decision(
     db_session,
@@ -157,7 +139,6 @@ def test_concurrent_approval_requests_only_allow_one_decision(
         request="Restart payment worker",
         status=TaskStatus.CREATED.value,
     )
-
     db_session.add(task)
     db_session.commit()
     db_session.refresh(task)
@@ -165,12 +146,12 @@ def test_concurrent_approval_requests_only_allow_one_decision(
     approval = ApprovalRequest(
         task_id=task.id,
         tool_name="service.restart",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
         risk_level="high",
         requested_by="requester-123",
         reason="High-risk operation requires human approval.",
         status=ApprovalStatus.PENDING.value,
     )
-
     db_session.add(approval)
     db_session.commit()
     db_session.refresh(approval)
@@ -179,98 +160,50 @@ def test_concurrent_approval_requests_only_allow_one_decision(
 
     def approve_as(user_id: str):
         session = SessionLocal()
-
         try:
             result = approve_request(
                 db=session,
                 approval_id=approval_id,
                 decided_by=user_id,
             )
-
             return {
                 "user_id": user_id,
                 "success": True,
                 "result": result,
             }
-
         except Exception as exc:
             session.rollback()
-
             return {
                 "user_id": user_id,
                 "success": False,
                 "error": exc,
             }
-
         finally:
             session.close()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        future_one = executor.submit(
-            approve_as,
-            "manager-001",
-        )
-
-        future_two = executor.submit(
-            approve_as,
-            "manager-002",
-        )
-
+        future_one = executor.submit(approve_as, "manager-001")
+        future_two = executor.submit(approve_as, "manager-002")
         result_one = future_one.result()
         result_two = future_two.result()
 
-    results = [
-        result_one,
-        result_two,
-    ]
-
-    successful = [
-        result
-        for result in results
-        if result["success"]
-    ]
-
-    failed = [
-        result
-        for result in results
-        if not result["success"]
-    ]
+    results = [result_one, result_two]
+    successful = [result for result in results if result["success"]]
+    failed = [result for result in results if not result["success"]]
 
     assert len(successful) == 1
     assert len(failed) == 1
 
     db_session.expire_all()
-
-    final_approval = db_session.get(
-        ApprovalRequest,
-        approval_id,
-    )
+    final_approval = db_session.get(ApprovalRequest, approval_id)
 
     assert final_approval is not None
-
-    assert (
-        final_approval.status
-        == ApprovalStatus.APPROVED.value
-    )
-
+    assert final_approval.status == ApprovalStatus.APPROVED.value
     assert final_approval.decided_by in {
         "manager-001",
         "manager-002",
     }
-
     assert final_approval.decided_at is not None
-
-def create_test_task(db):
-    task = Task(
-        user_id="user-123",
-        request="Restart payment worker",
-    )
-
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-
-    return task
 
 
 def test_create_approval(db_session):
@@ -283,11 +216,13 @@ def test_create_approval(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="High-risk operation requires human approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     assert approval.id is not None
     assert approval.task_id == task.id
     assert approval.tool_name == "service.restart"
+    assert approval.tool_arguments == DEFAULT_TOOL_ARGUMENTS
     assert approval.risk_level == "high"
     assert approval.requested_by == "user-123"
     assert approval.status == ApprovalStatus.PENDING.value
@@ -298,7 +233,6 @@ def test_create_approval(db_session):
         .filter(AuditEvent.task_id == task.id)
         .all()
     )
-
     assert len(events) == 1
     assert events[0].event_type == "approval.requested"
 
@@ -313,23 +247,19 @@ def test_get_approval(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
-    result = get_approval(
-        db=db_session,
-        approval_id=created.id,
-    )
+    result = get_approval(db=db_session, approval_id=created.id)
 
     assert result.id == created.id
     assert result.status == ApprovalStatus.PENDING.value
+    assert result.tool_arguments == DEFAULT_TOOL_ARGUMENTS
 
 
 def test_get_missing_approval_raises(db_session):
     with pytest.raises(ApprovalNotFoundError):
-        get_approval(
-            db=db_session,
-            approval_id=999999,
-        )
+        get_approval(db=db_session, approval_id=999999)
 
 
 def test_approve_request(db_session):
@@ -342,6 +272,7 @@ def test_approve_request(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     result = approve_request(
@@ -360,7 +291,6 @@ def test_approve_request(db_session):
         .order_by(AuditEvent.id)
         .all()
     )
-
     assert len(events) == 2
     assert events[1].event_type == "approval.granted"
 
@@ -375,6 +305,7 @@ def test_reject_request(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     result = reject_request(
@@ -393,7 +324,6 @@ def test_reject_request(db_session):
         .order_by(AuditEvent.id)
         .all()
     )
-
     assert len(events) == 2
     assert events[1].event_type == "approval.rejected"
 
@@ -408,6 +338,7 @@ def test_cannot_approve_already_approved_request(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     approve_request(
@@ -423,11 +354,7 @@ def test_cannot_approve_already_approved_request(db_session):
             decided_by="manager-789",
         )
 
-    persisted = get_approval(
-        db=db_session,
-        approval_id=approval.id,
-    )
-
+    persisted = get_approval(db=db_session, approval_id=approval.id)
     assert persisted.status == ApprovalStatus.APPROVED.value
     assert persisted.decided_by == "manager-456"
 
@@ -442,6 +369,7 @@ def test_cannot_reject_already_rejected_request(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     reject_request(
@@ -457,11 +385,7 @@ def test_cannot_reject_already_rejected_request(db_session):
             decided_by="manager-789",
         )
 
-    persisted = get_approval(
-        db=db_session,
-        approval_id=approval.id,
-    )
-
+    persisted = get_approval(db=db_session, approval_id=approval.id)
     assert persisted.status == ApprovalStatus.REJECTED.value
     assert persisted.decided_by == "manager-456"
 
@@ -476,6 +400,7 @@ def test_approved_request_cannot_be_rejected(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     approve_request(
@@ -491,11 +416,7 @@ def test_approved_request_cannot_be_rejected(db_session):
             decided_by="manager-789",
         )
 
-    persisted = get_approval(
-        db=db_session,
-        approval_id=approval.id,
-    )
-
+    persisted = get_approval(db=db_session, approval_id=approval.id)
     assert persisted.status == ApprovalStatus.APPROVED.value
     assert persisted.decided_by == "manager-456"
 
@@ -510,6 +431,7 @@ def test_rejected_request_cannot_be_approved(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     reject_request(
@@ -525,11 +447,7 @@ def test_rejected_request_cannot_be_approved(db_session):
             decided_by="manager-789",
         )
 
-    persisted = get_approval(
-        db=db_session,
-        approval_id=approval.id,
-    )
-
+    persisted = get_approval(db=db_session, approval_id=approval.id)
     assert persisted.status == ApprovalStatus.REJECTED.value
     assert persisted.decided_by == "manager-456"
 
@@ -544,6 +462,7 @@ def test_create_approval_reuses_existing_pending_approval(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     second = create_approval(
@@ -553,6 +472,7 @@ def test_create_approval_reuses_existing_pending_approval(db_session):
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     assert second.id == first.id
@@ -565,18 +485,50 @@ def test_create_approval_reuses_existing_pending_approval(db_session):
         )
         .all()
     )
-
     assert len(approvals) == 1
     assert approvals[0].status == ApprovalStatus.PENDING.value
+    assert approvals[0].tool_arguments == DEFAULT_TOOL_ARGUMENTS
 
     events = (
         db_session.query(AuditEvent)
         .filter(AuditEvent.task_id == task.id)
         .all()
     )
-
     assert len(events) == 1
     assert events[0].event_type == "approval.requested"
+
+
+def test_create_approval_rejects_different_arguments_for_pending_request(
+    db_session,
+):
+    task = create_test_task(db_session)
+
+    first = create_approval(
+        db=db_session,
+        task_id=task.id,
+        tool_name="service.restart",
+        risk_level="high",
+        requested_by="user-123",
+        reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
+    )
+
+    with pytest.raises(
+        InvalidApprovalStateError,
+        match="different arguments",
+    ):
+        create_approval(
+            db=db_session,
+            task_id=task.id,
+            tool_name="service.restart",
+            risk_level="high",
+            requested_by="user-123",
+            reason="Requires approval.",
+            tool_arguments={"service": "another-service"},
+        )
+
+    persisted = get_approval(db=db_session, approval_id=first.id)
+    assert persisted.tool_arguments == DEFAULT_TOOL_ARGUMENTS
 
 
 def test_approve_request_rolls_back_when_audit_fails(
@@ -592,6 +544,7 @@ def test_approve_request_rolls_back_when_audit_fails(
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     def failing_audit(*args, **kwargs):
@@ -605,10 +558,7 @@ def test_approve_request_rolls_back_when_audit_fails(
         failing_audit,
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match="Simulated audit failure",
-    ):
+    with pytest.raises(RuntimeError, match="Simulated audit failure"):
         approve_request(
             db=db_session,
             approval_id=approval.id,
@@ -616,11 +566,7 @@ def test_approve_request_rolls_back_when_audit_fails(
         )
 
     db_session.rollback()
-
-    persisted = get_approval(
-        db=db_session,
-        approval_id=approval.id,
-    )
+    persisted = get_approval(db=db_session, approval_id=approval.id)
 
     assert persisted.status == ApprovalStatus.PENDING.value
     assert persisted.decided_by is None
@@ -631,7 +577,6 @@ def test_approve_request_rolls_back_when_audit_fails(
         .filter(AuditEvent.task_id == task.id)
         .all()
     )
-
     assert len(events) == 1
     assert events[0].event_type == "approval.requested"
 
@@ -649,6 +594,7 @@ def test_reject_request_rolls_back_when_audit_fails(
         risk_level="high",
         requested_by="user-123",
         reason="Requires approval.",
+        tool_arguments=DEFAULT_TOOL_ARGUMENTS,
     )
 
     def failing_audit(*args, **kwargs):
@@ -662,10 +608,7 @@ def test_reject_request_rolls_back_when_audit_fails(
         failing_audit,
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match="Simulated audit failure",
-    ):
+    with pytest.raises(RuntimeError, match="Simulated audit failure"):
         reject_request(
             db=db_session,
             approval_id=approval.id,
@@ -673,11 +616,7 @@ def test_reject_request_rolls_back_when_audit_fails(
         )
 
     db_session.rollback()
-
-    persisted = get_approval(
-        db=db_session,
-        approval_id=approval.id,
-    )
+    persisted = get_approval(db=db_session, approval_id=approval.id)
 
     assert persisted.status == ApprovalStatus.PENDING.value
     assert persisted.decided_by is None
@@ -688,7 +627,5 @@ def test_reject_request_rolls_back_when_audit_fails(
         .filter(AuditEvent.task_id == task.id)
         .all()
     )
-
     assert len(events) == 1
     assert events[0].event_type == "approval.requested"
-
