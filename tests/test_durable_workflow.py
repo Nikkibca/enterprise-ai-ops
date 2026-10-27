@@ -10,10 +10,17 @@ from app.models import Task
 from app.workflow_runner import WorkflowRunner
 
 
-DATABASE_URL = os.getenv(
-    "LANGGRAPH_CHECKPOINT_DATABASE_URL",
-    "postgresql://app_user:app_password@localhost:5433/enterprise_ai_ops",
-)
+from app.llm.settings import LLMSettings
+
+
+def get_checkpoint_database_url() -> str:
+    url = os.getenv("LANGGRAPH_CHECKPOINT_DATABASE_URL")
+    if url:
+        return url.replace("@localhost:5433", "@127.0.0.1:5433")
+    return LLMSettings().langgraph_checkpoint_database_url
+
+
+DATABASE_URL = get_checkpoint_database_url()
 
 
 def test_high_risk_workflow_survives_postgres_checkpoint(

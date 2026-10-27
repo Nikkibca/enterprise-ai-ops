@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -5,11 +6,19 @@ from sqlalchemy.orm import sessionmaker
 
 class DatabaseSettings(BaseSettings):
     app_database_url: str = (
-        "postgresql+psycopg://app_user:app_password@localhost:5433/enterprise_ai_ops"
+        "postgresql+psycopg://app_user:app_password@127.0.0.1:5433/enterprise_ai_ops"
     )
     sql_reader_database_url: str = (
-        "postgresql+psycopg://sql_reader:sql_reader_password@localhost:5433/enterprise_ai_ops"
+        "postgresql+psycopg://sql_reader:sql_reader_password@127.0.0.1:5433/enterprise_ai_ops"
     )
+
+    @field_validator("app_database_url", "sql_reader_database_url", mode="before")
+    @classmethod
+    def normalize_db_url(cls, value: str) -> str:
+        if isinstance(value, str):
+            # Normalize localhost:5433 to 127.0.0.1:5433 to prevent 120s IPv6 timeouts on Windows
+            return value.replace("@localhost:5433", "@127.0.0.1:5433")
+        return value
 
     model_config = SettingsConfigDict(
         env_file=".env",

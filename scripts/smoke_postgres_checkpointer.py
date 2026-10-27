@@ -3,7 +3,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 
 DATABASE_URL = (
     "postgresql://"
-    "app_user:app_password@localhost:5433/"
+    "app_user:app_password@127.0.0.1:5433/"
     "enterprise_ai_ops"
 )
 

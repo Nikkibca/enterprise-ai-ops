@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
+import json
 
 from sqlalchemy import (
     DateTime,
@@ -9,8 +10,42 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    TypeDecorator,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class JSONText(TypeDecorator):
+    """
+    SQLAlchemy type decorator that persists JSON data as PostgreSQL JSON
+    while providing transparent string/JSON serialization in Python.
+
+    - Preserves SQL NULL as None.
+    - Serializes all JSON data structures (objects, arrays, strings, numbers, booleans)
+      consistently as valid JSON strings in Python (via json.dumps).
+    - Preserves all legitimate JSON objects (including keys like '_raw'
+      or '__legacy_unstructured_text__') without lossy sentinel unwrapping.
+    - Legacy unquoted text and empty strings are stored as JSON string values,
+      ensuring callers executing json.loads(event.details) always succeed.
+    - Ensures PostgreSQL native JSON operators (e.g. details->>'success') work in SQL.
+    """
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                return value
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        return json.dumps(value)
 
 
 class Base(DeclarativeBase):
@@ -165,7 +200,7 @@ class AuditEvent(Base):
     )
 
     details: Mapped[str] = mapped_column(
-        Text,
+        JSONText,
         nullable=False,
         default="",
     )
